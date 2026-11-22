@@ -1571,7 +1571,7 @@ function renderInv(){
   /* col = [key, label, align, extra?]  — "extra" columns hide behind the All-columns toggle
      so the default view fits a laptop screen without sideways scrolling. */
   const cols=[['brand','Product','frz'],
-    ['avail','Available'],['incoming','Inbound'],['pool','Total'],
+    ['avail','Available'],['incoming','Inbound'],['staged','Warehouse'],['pool','Total stock'],
     ['total','Sales velocity /d'],['fcd','Forecast (d / wk)'],
     ['cover_d','Days of cover'],['reorder','Reorder point'],['stockout','Stock out date'],
     ['net_qty','Order quantity'],['status','Order status']];
@@ -1641,7 +1641,8 @@ function renderInvRows(){
         +'<div class="sku">'+esc(x.sku)+(x.zero?' · no FBA data':'')+'</div></td>'
       +'<td class="num">'+fmt(v.avail)+'</td>'
       +'<td class="num">'+fmt(v.incoming)+'</td>'
-      +'<td class="num">'+fmt(v.pool)+'</td>'
+      +'<td class="num">'+fmt(v.staged||0)+'</td>'
+      +'<td class="num"><b>'+fmt((v.pool||0)+(v.staged||0))+'</b></td>'
       +'<td class="num tot" id="tt'+i+'">'+fmt1(v.total)+'</td>'
       +'<td class="num"><input class="fc-in" id="fd'+i+'" value="'+fdd+'" title="per day" oninput="onFc('+i+',\'d\',this.value)"> <span class="mini">/</span> <input class="fc-in" id="fw'+i+'" value="'+fwk+'" title="per week" oninput="onFc('+i+',\'w\',this.value)"></td>'
       +'<td class="num" id="cv'+i+'">'+(v.cover_d==null?'—':fmt(v.cover_d))+'</td>'
