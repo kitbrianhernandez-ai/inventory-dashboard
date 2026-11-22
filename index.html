@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DEMO BRAND — Candy Operating Dashboard</title>
+<title>DEMO BRAND — Inventory Operating Dashboard</title>
 <style>
 :root{
   --bg:#eef1f4; --card:#ffffff; --line:#e4e8ee; --line2:#eef1f5;
@@ -403,7 +403,7 @@ section[id^="sec-"].secactive{display:block}
 <aside class="sidebar">
   <div class="sidebrand">
     <div class="sidelogo"><span class="p">+</span>DEMO BRAND</div>
-    <div class="sidetag">CANDY<br>CONTROL</div>
+    <div class="sidetag">INVENTORY</div>
     <div class="sideeye">Command Center</div>
   </div>
   <nav class="snav">
@@ -429,14 +429,14 @@ section[id^="sec-"].secactive{display:block}
   </div>
   <div class="sidefoot">
     <div class="sft">Model status</div>
-    <div class="sfv hstat" id="hstat">Live from Seller Central + Warehouse Candy</div>
+    <div class="sfv hstat" id="hstat">Live from Seller Central + Warehouse file</div>
   </div>
 </aside>
 
 <div class="mainarea">
 <header class="pagehead">
   <div>
-    <div class="ph-eye">Candy Operating Dashboard</div>
+    <div class="ph-eye">Inventory Operating Dashboard</div>
     <h1>The Business</h1>
     <p class="sub" id="subtitle"></p>
   </div>
@@ -558,7 +558,7 @@ section[id^="sec-"].secactive{display:block}
     </div>
     <div class="upcard" id="up-joar">
       <h3>4 · Warehouse warehouse report <span class="opt">.xlsx only</span></h3>
-      <div class="upwhere">Google Drive &rarr; the <b>Warehouse Candy</b> sheet &rarr;
+      <div class="upwhere">Google Drive &rarr; the <b>Warehouse file</b> sheet &rarr;
         <b>File &rarr; Download &rarr; Microsoft Excel (.xlsx)</b>. It must be the .xlsx, not a CSV
         &mdash; the shading on each row is what says shipped vs staged, and a CSV throws it away.</div>
       <div class="drop" data-kind="joar">
@@ -602,7 +602,7 @@ section[id^="sec-"].secactive{display:block}
 
 <!-- ============ WAREHOUSE ============ -->
 <section id="sec-warehouse">
-  <div class="shead"><h2><span class="sq"></span>Warehouse — Warehouse Candy</h2>
+  <div class="shead"><h2><span class="sq"></span>Warehouse — Warehouse file</h2>
     <div class="sd">Colored rows are shipped to Amazon; uncolored rows are not yet shipped — packed and waiting (with a packing date, even if backlogged from an earlier week) or planned for this week (no packing date; week in column A, ships Friday). All uncolored units are netted out of Production Qty above.</div></div>
   <div class="kpis" id="wh-kpis"></div>
   <div class="panel">
@@ -646,7 +646,7 @@ section[id^="sec-"].secactive{display:block}
     <div class="sd" id="stock-sd"></div></div>
   <div class="bar" style="margin-bottom:12px;align-items:center;gap:12px;flex-wrap:wrap">
     <label class="addbtn" style="cursor:pointer;display:inline-flex;align-items:center">
-      Upload Warehouse Candy .xlsx
+      Upload Warehouse file .xlsx
       <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" id="f-joar-stock"
         style="display:none" onchange="if(this.files&amp;&amp;this.files[0]){var f=this.files[0];this.value='';var s=document.getElementById('stock-upl-stat');if(s){s.textContent='Reading '+f.name+'…';s.style.color='var(--muted)';}handleFile('joar',f);}">
     </label>
@@ -675,8 +675,8 @@ const PAYLOAD = {"DATA": {"meta": {"asof": "2026-11-20", "snapshot": "2026-11-18
 const WAREHOUSEHTML = "<!doctype html><html><head><meta charset=\"utf-8\"><title>Template</title></head><body style=\"font-family:system-ui;padding:24px;color:#555\"><h3>Template view</h3><p>Warehouse source document removed \u2014 placeholder only.</p></body></html>";
 const CANDY = {"stock": null, "stockDate": "", "production": "<!doctype html><html><head><meta charset=\"utf-8\"><title>Template</title></head><body style=\"font-family:system-ui;padding:24px;color:#555\"><h3>Template view</h3><p>Warehouse source document removed \u2014 placeholder only.</p></body></html>", "purchase": "<!doctype html><html><head><meta charset=\"utf-8\"><title>Template</title></head><body style=\"font-family:system-ui;padding:24px;color:#555\"><h3>Template view</h3><p>Warehouse source document removed \u2014 placeholder only.</p></body></html>"};
 /* ===== warehouse shipment log, parsed out of the Warehouse report ===== */
-const WH = {};
-const SHIP = {};
+const WH = {"products": [], "rows": []};
+const SHIP = {"asof": "", "detail": [], "rows": []};
 
 /* ============================================================
    Lightweight self-contained SVG chart library (no CDN, no deps)
@@ -1169,7 +1169,7 @@ function invKpis(){
 function renderHeader(){
   const k=invKpis(),sk=DATA.sales_kpi;
   document.getElementById('subtitle').innerHTML=
-    'One-page operating view for the Amazon candy business — as of <b>'+ASOF+'</b> (data snapshot '+SNAP+') · velocity mode <b>'+VLAB[state.velMode]+
+    'One-page operating view for the Amazon inventory — as of <b>'+ASOF+'</b> (data snapshot '+SNAP+') · velocity mode <b>'+VLAB[state.velMode]+
     '</b> · lead time <b>'+LEAD+' days</b>. Production quantities net out units already packed at the Warehouse warehouse.';
   document.getElementById('gen').textContent=DATA.meta.generated;
   document.getElementById('hstat').innerHTML=[
@@ -1315,9 +1315,9 @@ function renderInactive(){
       ? withStock+' of these still carry stock (available, inbound or staged) — reactivate or liquidate before treating them as gone.'
       : 'None of these carry any remaining stock.'; }
 }
-/* Warehouse Stock Level — the Warehouse Candy "Stocklevel" tab (raw-ingredient
+/* Warehouse Stock Level — the Warehouse file "Stocklevel" tab (raw-ingredient
    inventory already at the warehouse). Read from CANDY.stock, which the Warehouse
-   .xlsx upload refreshes; this is the same figure that seeds the Candy Purchase
+   .xlsx upload refreshes; this is the same figure that seeds the Purchase
    planner's "Inventory at warehouse". */
 const STOCK_ORDER=[
   "BUBS Smultron Granatäpplen Ovaler/Wild Berry Pomegranate Ovals 2,8 kg",
@@ -1352,7 +1352,7 @@ function renderStock(){
   if(upl){ const wm=(typeof WHMETA!=='undefined')?WHMETA:null;
     if(wm&&wm.source==='upload'){ upl.style.color='var(--good)';
       upl.textContent='Loaded from your upload'+(wm.file?' ('+wm.file+')':'')+(wm.date?', dated '+wm.date:'')
-        +'. Stock, reconciliation, staged units, netting and the Candy Purchase inventory all refreshed.'; }
+        +'. Stock, reconciliation, staged units, netting and the Purchase inventory all refreshed.'; }
     else{ upl.style.color='var(--muted)';
       upl.textContent='Using the Warehouse report built into this file — upload a newer .xlsx here to refresh this section and everything linked to it.'; } }
   const date=(typeof CANDY!=='undefined'&&CANDY&&CANDY.stockDate)?CANDY.stockDate:'';
@@ -1361,13 +1361,13 @@ function renderStock(){
   const total=keys.reduce((a,k)=>a+(Number(stock[k])||0),0);
   const sd=document.getElementById('stock-sd');
   if(sd) sd.textContent=keys.length
-    ? keys.length+' ingredient'+(keys.length>1?'s':'')+' from the Warehouse Candy Stocklevel tab'+(date?' — '+esc(date):'')+'. Raw-material inventory already at the warehouse; also seeds the Candy Purchase planner.'
-    : 'No Stocklevel data in this build. Upload a Warehouse Candy .xlsx in Data & Uploads to populate it.';
+    ? keys.length+' ingredient'+(keys.length>1?'s':'')+' from the Warehouse file Stocklevel tab'+(date?' — '+esc(date):'')+'. Raw-material inventory already at the warehouse; also seeds the Purchase planner.'
+    : 'No Stocklevel data in this build. Upload a Warehouse file .xlsx in Data & Uploads to populate it.';
   const thead=document.getElementById('stock-thead');
   if(thead) thead.innerHTML='<tr><th class="l">Ingredient</th><th>Units in stock</th></tr>';
   const kp=document.getElementById('stock-kpis');
   if(!keys.length){
-    body.innerHTML='<tr><td colspan="2" class="l muted">No stock levels yet — upload the Warehouse Candy .xlsx to see them here.</td></tr>';
+    body.innerHTML='<tr><td colspan="2" class="l muted">No stock levels yet — upload the Warehouse file .xlsx to see them here.</td></tr>';
     if(kp) kp.innerHTML=''; const n0=document.getElementById('stock-note'); if(n0) n0.textContent='';
     try{renderStockRecon();}catch(e){} return;
   }
@@ -1385,7 +1385,7 @@ function renderStock(){
     ['acc',fmt(total),'Total units in stock','across all ingredients']
   ].map(a=>'<div class="kpi '+a[0]+'"><div class="v">'+a[1]+'</div><div class="l">'+a[2]+'</div><small>'+a[3]+'</small></div>').join('');
   const note=document.getElementById('stock-note');
-  if(note) note.textContent='Snapshot, not live — it reflects the last Warehouse Candy .xlsx you uploaded (or the '
+  if(note) note.textContent='Snapshot, not live — it reflects the last Warehouse file .xlsx you uploaded (or the '
     +'--joar-stock file baked in at build). Upload a newer workbook in Data & Uploads to refresh it.';
   try{renderStockRecon();}catch(e){}
 }
@@ -1414,7 +1414,7 @@ function srecSetProd(i,val){
   renderStockRecon();
 }
 function srecResetProd(){SRECON_PROD_OVR=null;try{localStorage.removeItem(SRPROD_KEY);}catch(e){}renderStockRecon();}
-/* Reproduce the Candy Purchase planner's own maths from its live DOM, so the
+/* Reproduce the Purchase planner's own maths from its live DOM, so the
    anticipated figures match exactly what the planner shows. */
 function srecReadPlanner(){
   const f=(typeof CPUR_FRAME!=='undefined')?CPUR_FRAME:null; if(!f) return null;
@@ -1461,8 +1461,8 @@ function renderStockRecon(){
   const data=srecReadPlanner();
   if(!data){
     if(thead)thead.innerHTML=''; if(ctl)ctl.innerHTML='';
-    tb.innerHTML='<tr><td class="l muted">Open the <b>Candy Purchase</b> planner once so its recipe loads — anticipated stock is computed from it.</td></tr>';
-    if(note)note.innerHTML='<button class="chip" onclick="try{mountCandy(\'cpur\');}catch(e){}">Load the Candy Purchase planner</button>';
+    tb.innerHTML='<tr><td class="l muted">Open the <b>Purchase</b> planner once so its recipe loads — anticipated stock is computed from it.</td></tr>';
+    if(note)note.innerHTML='<button class="chip" onclick="try{mountCandy(\'cpur\');}catch(e){}">Load the Purchase planner</button>';
     return;
   }
   const tol=srecTol(), base=srecBaseline(), P=data.prod, PP=data.planProd||P;
@@ -1517,7 +1517,7 @@ function renderStockRecon(){
         +(offs.length?'<b style="color:var(--crit)">'+offs.length+' component(s) outside &plusmn;'+fmt(tol)+' &mdash; actual does not match anticipated.</b>'
                      :'<b style="color:var(--good)">All components within &plusmn;'+fmt(tol)+' &mdash; actual matches anticipated.</b>');
     } else {
-      note.textContent='Anticipated after = current stock − (recipe × production ÷ batch size), taken live from the Candy Purchase planner and the plan\'s production quantities. Click "Save anticipated" before the run, then upload the post-production Warehouse .xlsx to check the actual stock against it.';
+      note.textContent='Anticipated after = current stock − (recipe × production ÷ batch size), taken live from the Purchase planner and the plan\'s production quantities. Click "Save anticipated" before the run, then upload the post-production Warehouse .xlsx to check the actual stock against it.';
     }
   }
 }
@@ -2135,7 +2135,7 @@ function mountCandy(which){
   const src=isProd?(CANDY&&CANDY.production):(CANDY&&CANDY.purchase);
   if(!src){host.innerHTML=emptyMsg('Planner not available in this build.');return;}
   const f=document.createElement('iframe');
-  f.className='frame';f.title=isProd?'Candy Production Planner':'Candy Purchase Planner';
+  f.className='frame';f.title=isProd?'Production Planner':'Purchase Planner';
   host.appendChild(f);
   if(isProd){CPROD_FRAME=f;f.addEventListener('load',()=>{injectProductionData(f);themeIframes();setTimeout(renderCandyKpis,320);});}
   else{CPUR_FRAME=f;f.addEventListener('load',()=>{injectPurchaseInventory(f);injectPurchaseProduce(f);});}
@@ -3106,7 +3106,7 @@ async function joarParse(buf){
       packed:whDate(V(r,7)), ship:V(r,8),
       shaded:!!((sh.shade[r]||{})[4])});
   }
-  if(!cartons.length) throw new Error('No carton rows found — is this the Warehouse Candy workbook?');
+  if(!cartons.length) throw new Error('No carton rows found — is this the Warehouse file workbook?');
   /* contiguous cartons form a shipment; a new one starts at carton 1 or when the shading flips */
   const groups=[]; let cur=null;
   cartons.forEach(c=>{
@@ -3203,7 +3203,7 @@ function whMapStaged(staged,inv){
    The Warehouse workbook also carries a "Stocklevel" sheet: one dated column per
    count, ingredients down column A. The newest count is the rightmost column
    carrying numbers in two or more ingredient rows. Reading it here means the
-   Candy Purchase planner's "Inventory at warehouse" refreshes from the same
+   Purchase planner's "Inventory at warehouse" refreshes from the same
    upload as staged units, instead of staying frozen at the --joar-stock value
    baked in at build time. */
 function whStkNum(v){
@@ -3284,7 +3284,7 @@ async function applyWarehouse(buf,fileName){
   if(typeof UNMATCHED!=='undefined' && Array.isArray(UNMATCHED)){
     UNMATCHED.length=0; m.unmatched.forEach(u=>UNMATCHED.push(u));
   }
-  /* the same upload also refreshes the Candy Purchase ingredient inventory */
+  /* the same upload also refreshes the Purchase ingredient inventory */
   let stkN=0;
   try{
     const stk=await joarStock(buf);
@@ -3299,7 +3299,7 @@ async function applyWarehouse(buf,fileName){
 function whRedraw(){
   ['renderWH','renderStock','renderInv','renderOverview','renderCandyKpis','syncCandy','redrawAll','whStamp']
     .forEach(fn=>{ try{ if(typeof window[fn]==='function') window[fn](); }catch(e){} });
-  /* re-seed the Candy Purchase planner's warehouse ingredient inventory from the
+  /* re-seed the Purchase planner's warehouse ingredient inventory from the
      refreshed CANDY.stock (syncCandy only re-pushes the produce quantities) */
   try{ if(typeof CPUR_FRAME!=='undefined' && CPUR_FRAME
         && typeof injectPurchaseInventory==='function') injectPurchaseInventory(CPUR_FRAME); }catch(e){}
@@ -3321,7 +3321,7 @@ function whStamp(){
   } else {
     n.style.background='transparent'; n.style.color='var(--muted)';
     n.textContent='Warehouse figures come from the Warehouse report folded in when this file was built'
-      +(WHMETA.date?' ('+WHMETA.date+')':'')+'. Upload a newer Warehouse Candy .xlsx in Data & Uploads to refresh them.';
+      +(WHMETA.date?' ('+WHMETA.date+')':'')+'. Upload a newer Warehouse file .xlsx in Data & Uploads to refresh them.';
   }
 }
 function initWarehouseUpload(){
@@ -3362,7 +3362,7 @@ function boot(){
   if(accP) accP.addEventListener('toggle',function(){if(this.open)mountCandy('cprod');});
   const accU=document.getElementById('acc-cpur');
   if(accU) accU.addEventListener('toggle',function(){if(this.open){mountCandy('cpur');setTimeout(()=>injectPurchaseProduce(CPUR_FRAME),400);}});
-  /* mount the Candy Purchase planner up-front (even while its accordion is closed)
+  /* mount the Purchase planner up-front (even while its accordion is closed)
      so the Stock Level reconciliation can read its recipe and show anticipated
      stock without the user having to open the planner first */
   try{mountCandy('cpur');}catch(e){}
