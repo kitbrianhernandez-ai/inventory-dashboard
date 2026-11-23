@@ -277,6 +277,11 @@ svg.spark{display:inline-block;vertical-align:middle;width:auto}
 .fc-in{width:50px;border:1px solid var(--line);background:var(--card);color:var(--ink);
   border-radius:6px;padding:4px 5px;font-size:12px;font-weight:700;text-align:right;outline:none}
 .fc-in:focus{border-color:var(--accent)}
+.vel-in{width:54px;border:1px solid transparent;background:transparent;color:var(--accent);
+  border-radius:6px;padding:3px 5px;font:inherit;font-size:12.7px;font-weight:800;text-align:right;
+  outline:none;font-variant-numeric:tabular-nums;cursor:text;transition:border-color .12s,background .12s}
+.vel-in:hover{border-color:var(--line)}
+.vel-in:focus{border-color:var(--accent);background:var(--card)}
 .banner{background:var(--crit-s);border:1px solid var(--crit);color:var(--crit);border-radius:11px;
   padding:11px 15px;margin-bottom:14px;font-size:12.5px;font-weight:600}
 .banner:empty{display:none}
@@ -956,7 +961,7 @@ const state={invFilter:'all',invSearch:'',invSort:'net_qty',invDir:-1,velMode:'b
              cStart:(PAYLOAD.DAILY_RANGE?PAYLOAD.DAILY_RANGE.start:''),cEnd:(PAYLOAD.DAILY_RANGE?PAYLOAD.DAILY_RANGE.end:''),
              showAllCols:false,
              invNoteHidden:(function(){try{return localStorage.getItem('demo-invnote-hidden')==='1';}catch(e){return false;}})(),
-             prodStart:PSTART_DEFAULT,forecast:{},
+             prodStart:PSTART_DEFAULT,forecast:{},velOverride:{},
              win:'30',salesFilter:'all',salesSearch:'',salesSort:'rev',salesDir:-1,
              whFilter:'all',shipFilter:'open'};
 
@@ -1082,7 +1087,13 @@ function calc(x){
   const vm=state.velMode;
   const base=(vm==='custom')?customVel(x.sku):x.m[vm].vel_day;
   const fcd=state.forecast[x.sku]||0;
-  const total=base+fcd;
+  /* Velocity override: when the user types a value straight into the editable
+     Sales velocity /d cell it becomes the single source of truth for this SKU,
+     and every downstream figure (cover, reorder, stockout, status and Order
+     quantity) recomputes off it. Clearing the cell drops back to base+forecast. */
+  const ov=state.velOverride[x.sku];
+  const hasOv=(ov!=null&&ov!==''&&!isNaN(+ov));
+  const total=hasOv?Math.max(0,+ov):base+fcd;
   const avail=x.avail+x.fctx;
   const pool=avail+x.incoming;
   const preProd=Math.max(0,daysBetween(SNAP,state.prodStart));
@@ -1590,7 +1601,7 @@ function renderInv(){
     +'<ul class="notelist" id="inv-note-list" style="'+(state.invNoteHidden?'display:none':'')+'">'
     +'<li><b>Total velocity/day</b> = base ('+velLabel()+')'
       +(state.velMode==='custom'?' — units sold across the chosen date range ÷ the days in it':' from the FBA rolling t7/t30/t60/t90 columns')
-      +' + your editable <b>forecast</b> velocity.</li>'
+      +' + your editable <b>forecast</b> velocity. You can also type straight into the <b>Sales velocity /d</b> cell to override it — Order quantity, cover and status recompute live; clear the cell to revert.</li>'
     +'<li><b>Available</b> folds FC-transfer into Amazon-available. <b>Pool</b> = Available + Incoming.</li>'
     +'<li><b>Cover</b> = Available ÷ Total velocity/day (excludes Incoming — same basis as Stockout date, so Stockout = today + Cover).</li>'
     +'<li><b>Cover + Min Cover</b> = Cover + your Minimum Cover target, shown for reference only — it plays no part in Status, Stockout date or Production Qty (which is exactly why it can safely be a large number without ever masking that a SKU is actually short).</li>'
@@ -1643,7 +1654,7 @@ function renderInvRows(){
       +'<td class="num">'+fmt(v.incoming)+'</td>'
       +'<td class="num">'+fmt(v.staged||0)+'</td>'
       +'<td class="num"><b>'+fmt((v.pool||0)+(v.staged||0))+'</b></td>'
-      +'<td class="num tot" id="tt'+i+'">'+fmt1(v.total)+'</td>'
+      +'<td class="num tot" id="tt'+i+'"><input class="vel-in" id="vl'+i+'" value="'+fmt1(v.total)+'" title="Edit sales velocity /day — Order quantity and status recompute live" inputmode="decimal" oninput="onVel('+i+',this.value)"></td>'
       +'<td class="num"><input class="fc-in" id="fd'+i+'" value="'+fdd+'" title="per day" oninput="onFc('+i+',\'d\',this.value)"> <span class="mini">/</span> <input class="fc-in" id="fw'+i+'" value="'+fwk+'" title="per week" oninput="onFc('+i+',\'w\',this.value)"></td>'
       +'<td class="num" id="cv'+i+'">'+(v.cover_d==null?'—':fmt(v.cover_d))+'</td>'
       +'<td class="num" id="ro'+i+'" title="Reorder Point = Total velocity/day × Lead time — the stock level at which a fresh order must already be placed">'+fmt(v.reorder)+'</td>'
@@ -1677,6 +1688,30 @@ function onFc(i,unit,val){
     cells[4].textContent=k.nosales;cells[5].textContent=k.healthy;cells[6].textContent=fmt(k.toproduce);
     cells[7].textContent=fmt(k.staged);cells[8].textContent=fmt(k.onhand);cells[9].textContent=fmt(k.pipe);}
   clearTimeout(onFc._t); onFc._t=setTimeout(()=>{renderInvCharts();renderHeader();renderOverview();renderCandyKpis();},260);
+}
+/* Direct edit of the Sales velocity /d cell — stores a per-SKU override and
+   recomputes the whole row in place (cover, reorder, stockout, Order quantity,
+   status) exactly like onFc. Blank clears the override back to base+forecast. */
+function onVel(i,val){
+  const o=CUR[i]; if(!o) return;
+  const t=String(val).trim();
+  if(t===''||isNaN(+t)) delete state.velOverride[o.x.sku];
+  else state.velOverride[o.x.sku]=Math.max(0,+t);
+  const v=rowVals(o.x); o.v=v;
+  const S=(id,html)=>{const el=document.getElementById(id+i); if(el) el.innerHTML=html;};
+  S('cv',v.cover_d==null?'—':fmt(v.cover_d));S('cw',v.cover_w==null?'—':fmt1(v.cover_w));
+  S('ct',v.cover_target_d==null?'—':fmt(v.cover_target_d));
+  S('cpd',v.cover_pool_d==null?'—':fmt(v.cover_pool_d));S('cpw',v.cover_pool_w==null?'—':fmt1(v.cover_pool_w));
+  S('ro',fmt(v.reorder));S('so',dt(v.stockout));S('sop',dt(v.stockout_pool));
+  S('oq',v.net_qty==null?'<span class="muted">—</span>':'<b>'+fmt(v.net_qty)+'</b>');
+  S('st','<span class="pill '+v.status+'"><span class="dot"></span>'+SLAB[v.status]+'</span>');
+  const tr=document.querySelector('tr[data-sku="'+CSS.escape(o.x.sku)+'"]'); if(tr) tr.className='lb '+v.status;
+  const k=invKpis();
+  const cells=document.querySelectorAll('#inv-kpis .kpi .v');
+  if(cells.length>=10){cells[1].textContent=k.stockout;cells[2].textContent=k.now;cells[3].textContent=k.soon;
+    cells[4].textContent=k.nosales;cells[5].textContent=k.healthy;cells[6].textContent=fmt(k.toproduce);
+    cells[7].textContent=fmt(k.staged);cells[8].textContent=fmt(k.onhand);cells[9].textContent=fmt(k.pipe);}
+  clearTimeout(onVel._t); onVel._t=setTimeout(()=>{renderInvCharts();renderHeader();renderOverview();renderCandyKpis();},260);
 }
 
 function renderInvCharts(){
