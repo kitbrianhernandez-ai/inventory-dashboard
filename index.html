@@ -1084,84 +1084,47 @@ function weekRangeLabel(weekVal){
 function addDays(base,n){const d=new Date(base+'T00:00:00');d.setDate(d.getDate()+Math.round(n));return d.toISOString().slice(0,10);}
 
 function calc(x){
+  /* ---- Candy-hub replenishment model (ported into the demo 2026-11-25) --------
+     ONE pick pool: TOTAL = Available + Inbound + Warehouse. A single Cover, one
+     Stockout date, the status and the Production Qty all key off it.
+       Cover        = TOTAL ÷ velocity/day
+       Reorder Pt   = velocity/day × Minimum Cover
+       Production   = velocity/day × Minimum Cover − TOTAL, floored at 0
+       Status       = Stockout (TOTAL 0) · No sales (no velocity) ·
+                      Order now (Production > 0) · Healthy (Production 0)
+     No lead-time term, no pre-production term, no "soon" band — this mirrors the
+     live Candy Operating Hub exactly. The editable Sales-velocity override is
+     kept so the velocity cell stays live-editable in the demo. */
   const vm=state.velMode;
-  const base=(vm==='custom')?customVel(x.sku):x.m[vm].vel_day;
+  const base=(x.m[vm]?x.m[vm].vel_day:0);
   const fcd=state.forecast[x.sku]||0;
-  /* Velocity override: when the user types a value straight into the editable
-     Sales velocity /d cell it becomes the single source of truth for this SKU,
-     and every downstream figure (cover, reorder, stockout, status and Order
-     quantity) recomputes off it. Clearing the cell drops back to base+forecast. */
   const ov=state.velOverride[x.sku];
   const hasOv=(ov!=null&&ov!==''&&!isNaN(+ov));
   const total=hasOv?Math.max(0,+ov):base+fcd;
-  const avail=x.avail+x.fctx;
-  const pool=avail+x.incoming;
-  const preProd=Math.max(0,daysBetween(SNAP,state.prodStart));
-  /* Cover = Available stock (on-hand + FC-transfer) ÷ daily velocity — the SAME
-     "avail" the Stockout Date uses below, deliberately excluding Incoming (units
-     still in transit to Amazon: not yet sellable, and not guaranteed to land on
-     any particular day). This keeps Cover and Stockout Date numerically
-     consistent: Stockout Date = ASOF + Cover(days). Previously this used Pool
-     (avail+incoming), which inflated Cover for any SKU with a large inbound
-     shipment (e.g. Available 1,021 + Incoming 1,100 showed as 46 days of cover
-     instead of the true 22 days of currently-sellable runway). Fixed 2026-09-17. */
-  const cover_d=total>0?avail/total:null;
-  const reorder=total*LEAD;
-  const stockout=total>0?addDays(ASOF,avail/total):null;
-  /* Pool-based Cover & Stockout — the SAME two metrics computed against Pool
-     (Available+FC-transfer+Incoming) instead of Available alone. This is the
-     optimistic "if every inbound unit lands exactly on schedule" view, shown
-     alongside (never instead of) the conservative Available-only figures above.
-     Status, "needs", and Production Qty all still key off the Available-only
-     cover_d/stockout — these Pool variants are reference-only. Added 2026-09-18. */
-  const cover_pool_d=total>0?pool/total:null;
-  const stockout_pool=total>0?addDays(ASOF,pool/total):null;
   const MC=state.minCover;
-  /* "Order now" is anchored to LEAD (days), not an arbitrary flat cutoff.
-     cover_d<=LEAD is mathematically the same test as "Available stock has hit
-     the Reorder Point" (reorder = velocity×LEAD, in units) — the textbook
-     definition of "you must act today, because by the time a new order lands
-     you may already be out." Previously this was cover_d<=1 (one day left),
-     which only fired once you were already critically late rather than at the
-     point a real reorder decision should trigger. "Order soon" = you'll survive
-     the lead time but you're inside your Minimum Cover safety buffer.
-     Fixed 2026-09-18. */
-  const status=pool<=0?'stockout':reorder<=0?'nosales':cover_d<=LEAD?'now':cover_d<MC?'soon':'healthy';
-  /* Production Qty is only meaningful when the SKU actually needs a batch.
-     Healthy and No-sales rows return null, so the table shows "—" and the
-     KPI/chart totals ignore them rather than adding a quantity nobody will order. */
+  const avail=x.avail+x.fctx;              // on-hand (fulfillable + FC-transfer)
+  const incoming=x.incoming||0;            // inbound to Amazon
+  const staged=x.staged||0;                // warehouse stock not yet shipped
+  const totalpick=avail+incoming+staged;   // the whole pick pool
+  const pool=totalpick;                    // legacy alias
+  const cover_d=total>0?totalpick/total:null;
+  const reorder=total*MC;                  // Reorder Point = velocity × Minimum Cover
+  const stockout=total>0?addDays(ASOF,totalpick/total):null;
+  const cover_pool_d=cover_d, stockout_pool=stockout;   // legacy aliases
+  const gross=(total>0)?Math.max(0,Math.round(total*MC-totalpick)):0;
+  const needProd=gross;
+  const status=totalpick<=0?'stockout':total<=0?'nosales':(needProd>0?'now':'healthy');
   const needs=(status==='stockout'||status==='now'||status==='soon');
-  const staged=x.staged||0;
-  /* Production horizon uses the live Minimum Cover setting (MC, the 6wk/2mo/3mo
-     control) as its buffer, NOT the SKU's own live Cover. Plugging live cover_d
-     in here used to be self-cancelling: since the old cover_d was defined as
-     pool/total, "total*cover_d" always equalled exactly "pool", so Pool
-     cancelled out of the formula algebraically and Production Qty never
-     actually reacted to current stock levels at all. Using MC (a fixed target
-     chosen by the user, independent of any one SKU's own stock) restores real
-     sensitivity to Pool — more stock on hand now correctly lowers Production
-     Qty — AND ties the recommended quantity to the same buffer you're managing
-     status against: raising Minimum Cover to 2mo/3mo now also raises how much
-     gets recommended, not just which SKUs get flagged. Fixed 2026-09-17. */
-  const gross=(needs&&total>0)?Math.max(0,total*(LEAD+MC+preProd)-pool):0;
-  const net=needs?Math.max(0,gross-staged):null;
-  /* Cover + Min Cover — a purely informational, additive combination of the
-     SKU's own live Cover (days) and your Minimum Cover target, requested
-     alongside the Production Qty fix above. Deliberately kept SEPARATE from
-     cover_d: it plays no part in status classification, Stockout date, or the
-     Production Qty formula (all of which still correctly use cover_d and MC
-     independently). If it were used for status instead — cover_d+MC < MC — that
-     simplifies to cover_d < 0, which is never true, so no SKU could ever be
-     flagged "Soon" again. It exists purely as an at-a-glance combined figure. */
+  const net=needs?needProd:null;
   const cover_target_d=(cover_d==null)?null:cover_d+MC;
-  return {base,base_wk:base*7,fcd,total,total_wk:total*7,avail,pool,cover_d,
-          cover_w:(cover_d==null?null:cover_d/7),cover_target_d,cover_pool_d,
-          cover_pool_w:(cover_pool_d==null?null:cover_pool_d/7),reorder,gross,staged,net,needs,
+  return {base,base_wk:base*7,fcd,total,total_wk:total*7,avail,incoming,staged,totalpick,pool:totalpick,
+          cover_d,cover_w:(cover_d==null?null:cover_d/7),cover_target_d,
+          cover_pool_d,cover_pool_w:(cover_d==null?null:cover_d/7),reorder,gross,needProd,staged,net,needs,
           stockout,stockout_pool,status};
 }
 function rowVals(x){const c=calc(x);return{
   asin:x.asin,brand:x.brand||'',name:x.shortname||x.name,variation:x.variation||'',size:x.size||'',
-  avail:c.avail,incoming:x.incoming,pool:c.pool,base:c.base,base_wk:c.base_wk,fcd:c.fcd,
+  avail:c.avail,incoming:x.incoming,pool:c.pool,totalpick:c.totalpick,base:c.base,base_wk:c.base_wk,fcd:c.fcd,
   total:c.total,total_wk:c.total_wk,cover_d:c.cover_d,cover_w:c.cover_w,cover_target_d:c.cover_target_d,
   cover_pool_d:c.cover_pool_d,cover_pool_w:c.cover_pool_w,
   reorder:c.reorder,stockout:c.stockout,stockout_pool:c.stockout_pool,staged:c.staged,net_qty:c.net,status:c.status,_c:c};}
@@ -1181,7 +1144,7 @@ function renderHeader(){
   const k=invKpis(),sk=DATA.sales_kpi;
   document.getElementById('subtitle').innerHTML=
     'One-page operating view for the Amazon inventory — as of <b>'+ASOF+'</b> (data snapshot '+SNAP+') · velocity mode <b>'+VLAB[state.velMode]+
-    '</b> · lead time <b>'+LEAD+' days</b>. Production quantities net out units already packed at the Warehouse warehouse.';
+    '</b> · minimum cover <b>'+state.minCover+' days</b>. TOTAL pick pool = Available + Inbound + Warehouse; Production Qty brings it up to the minimum-cover target.';
   document.getElementById('gen').textContent=DATA.meta.generated;
   document.getElementById('hstat').innerHTML=[
     ['Revenue YTD',money(sk.windows.ytd.revenue)],
@@ -1219,7 +1182,7 @@ function renderOverview(){
   /* status donut */
   const st=[['stockout',k.stockout],['now',k.now],['soon',k.soon],['nosales',k.nosales],['healthy',k.healthy]];
   document.getElementById('ov-status-sub').textContent=
-    k.now+k.stockout+' of '+k.skus+' SKUs need a purchase order today; '+k.soon+' fall below the '+LEAD+'-day lead time.';
+    k.now+k.stockout+' of '+k.skus+' SKUs need a production batch now; '+k.healthy+' are at or above the minimum-cover target.';
   put('ch-ov-status',chDonut(st.map(s=>({name:SLAB[s[0]],value:s[1],color:SCOL[s[0]]})),{center:k.skus,label:'SKUs'}));
 
   /* daily run-rate by window */
@@ -1536,11 +1499,11 @@ function renderInv(){
   const k=invKpis(),vm=state.velMode;
   const preProd=Math.max(0,daysBetween(SNAP,state.prodStart));
   document.getElementById('inv-sd').innerHTML=
-    'Velocity <b>'+velLabel()+'</b> · lead <b>'+LEAD+'d</b> · min cover <b>'+state.minCover+'d</b>'+(preProd?' · pre-production <b>'+preProd+'d</b>':'')+
-    ' · Production Qty covers lead + each SKU\'s own cover-days, less warehouse-staged units.';
+    'Velocity <b>'+velLabel()+'</b> · minimum cover <b>'+state.minCover+'d</b>'+
+    ' · Cover = TOTAL (Available + Inbound + Warehouse) ÷ velocity; Production Qty = velocity × minimum cover − TOTAL.';
   const psd=document.getElementById('plan-sd');
   if(psd) psd.innerHTML='Every SKU with its velocity, cover and the quantity to produce. '
-    +'Velocity <b>'+velLabel()+'</b> · lead <b>'+LEAD+'d</b> · minimum cover <b>'+state.minCover+'d</b>. Production Qty is shown only where a batch is actually needed.';
+    +'Velocity <b>'+velLabel()+'</b> · minimum cover <b>'+state.minCover+'d</b>. Production Qty is shown only where a batch is actually needed.';
 
   const un=PAYLOAD.UNMATCHED||[];
   document.getElementById('banner').innerHTML=un.length
@@ -1582,10 +1545,10 @@ function renderInv(){
   /* col = [key, label, align, extra?]  — "extra" columns hide behind the All-columns toggle
      so the default view fits a laptop screen without sideways scrolling. */
   const cols=[['brand','Product','frz'],
-    ['avail','Available'],['incoming','Inbound'],['staged','Warehouse'],['pool','Total stock'],
-    ['total','Sales velocity /d'],['fcd','Forecast (d / wk)'],
-    ['cover_d','Days of cover'],['reorder','Reorder point'],['stockout','Stock out date'],
-    ['net_qty','Order quantity'],['status','Order status']];
+    ['avail','Available'],['incoming','Inbound'],['staged','Warehouse'],['totalpick','TOTAL'],
+    ['total','Total Vel/D'],['fcd','Vel Forecast'],
+    ['cover_d','Cover'],['reorder','Reorder Pt'],['stockout','Stockout'],
+    ['net_qty','Production Qty'],['status','Status']];
   INVCOLS=cols;
   const tb=document.querySelector('.plantable');
   if(tb) tb.classList.toggle('showall',state.showAllCols);
@@ -1599,17 +1562,13 @@ function renderInv(){
     '<div class="note-hdr"><b>How it\'s computed</b>'
     +'<button class="colbtn" onclick="toggleInvNote()">'+(state.invNoteHidden?'Show':'Hide')+'</button></div>'
     +'<ul class="notelist" id="inv-note-list" style="'+(state.invNoteHidden?'display:none':'')+'">'
-    +'<li><b>Total velocity/day</b> = base ('+velLabel()+')'
-      +(state.velMode==='custom'?' — units sold across the chosen date range ÷ the days in it':' from the FBA rolling t7/t30/t60/t90 columns')
-      +' + your editable <b>forecast</b> velocity. You can also type straight into the <b>Sales velocity /d</b> cell to override it — Order quantity, cover and status recompute live; clear the cell to revert.</li>'
-    +'<li><b>Available</b> folds FC-transfer into Amazon-available. <b>Pool</b> = Available + Incoming.</li>'
-    +'<li><b>Cover</b> = Available ÷ Total velocity/day (excludes Incoming — same basis as Stockout date, so Stockout = today + Cover).</li>'
-    +'<li><b>Cover + Min Cover</b> = Cover + your Minimum Cover target, shown for reference only — it plays no part in Status, Stockout date or Production Qty (which is exactly why it can safely be a large number without ever masking that a SKU is actually short).</li>'
-    +'<li><b>Cover, Pool</b> and <b>Cover, Pool Stockout</b> are the same two figures recomputed against <b>Pool</b> instead of Available — the optimistic view that assumes every Incoming unit lands exactly on schedule; Status/Production Qty never use these, only the Available-only figures above.</li>'
-    +'<li><b>Reorder point</b> = Total velocity/day × '+LEAD+'d lead.</li>'
-    +'<li><b>Production Qty</b> = Total velocity/day × ('+LEAD+'d lead + '+state.minCover+'d minimum cover'+(preProd?' + '+preProd+'d pre-production':'')+') − Pool − warehouse-staged, floored at 0 — i.e. produce enough to cover the lead time and rebuild your minimum-cover buffer, net of everything already at or heading to Amazon and what is already staged.</li>'
-    +'<li><b>Production Qty is only calculated for Stock out, Order now and Order soon rows</b>; Healthy and No-sales SKUs show “—”, since there is nothing to order yet.</li>'
-    +'<li><b>Status</b>: Stock out when Pool = 0 · No sales when there is stock but no velocity · otherwise Order now (cover ≤ '+LEAD+'d lead time — the classic reorder point: you\'ll run out before a fresh order can land), Order soon ('+LEAD+'d to '+state.minCover+'d minimum cover — you\'ll survive the lead time but you\'re inside your safety buffer) or Healthy (≥ '+state.minCover+'d). Cover, stockout and status ignore staged stock — staged units are not sellable until shipped.</li>'
+    +'<li><b>Total Vel/D</b> = base ('+velLabel()+') from the FBA rolling t7/t30/t60/t90 columns + your editable <b>Vel Forecast</b>. You can also type straight into the <b>Total Vel/D</b> cell to override it — Cover, Production Qty and status recompute live; clear the cell to revert.</li>'
+    +'<li><b>Available</b> folds FC-transfer into Amazon-available. <b>TOTAL</b> = Available + Inbound + Warehouse — the whole pick pool.</li>'
+    +'<li><b>Cover</b> = TOTAL ÷ Total Vel/D (counts every unit on hand, inbound or staged). <b>Stockout</b> = today + Cover.</li>'
+    +'<li><b>Reorder Pt</b> = Total Vel/D × '+state.minCover+'d Minimum Cover.</li>'
+    +'<li><b>Production Qty</b> = Total Vel/D × '+state.minCover+'d Minimum Cover − TOTAL, floored at 0 — produce enough to bring the whole pick pool up to your minimum-cover target.</li>'
+    +'<li><b>Production Qty shows only where a batch is actually needed</b>; Healthy and No-sales SKUs show “—”.</li>'
+    +'<li><b>Status</b>: Stockout when TOTAL = 0 · No sales when there is stock but no velocity · Order now when Production Qty > 0 (cover below Minimum Cover) · Healthy when Production Qty = 0 (cover at or above Minimum Cover).</li>'
     +'</ul>';
 }
 function toggleInvNote(){
@@ -1652,13 +1611,13 @@ function renderInvRows(){
         +'<div class="sku">'+esc(x.sku)+(x.zero?' · no FBA data':'')+'</div></td>'
       +'<td class="num">'+fmt(v.avail)+'</td>'
       +'<td class="num">'+fmt(v.incoming)+'</td>'
-      +'<td class="num">'+fmt(v.staged||0)+'</td>'
-      +'<td class="num"><b>'+fmt((v.pool||0)+(v.staged||0))+'</b></td>'
-      +'<td class="num tot" id="tt'+i+'"><input class="vel-in" id="vl'+i+'" value="'+fmt1(v.total)+'" title="Edit sales velocity /day — Order quantity and status recompute live" inputmode="decimal" oninput="onVel('+i+',this.value)"></td>'
-      +'<td class="num"><input class="fc-in" id="fd'+i+'" value="'+fdd+'" title="per day" oninput="onFc('+i+',\'d\',this.value)"> <span class="mini">/</span> <input class="fc-in" id="fw'+i+'" value="'+fwk+'" title="per week" oninput="onFc('+i+',\'w\',this.value)"></td>'
-      +'<td class="num" id="cv'+i+'">'+(v.cover_d==null?'—':fmt(v.cover_d))+'</td>'
-      +'<td class="num" id="ro'+i+'" title="Reorder Point = Total velocity/day × Lead time — the stock level at which a fresh order must already be placed">'+fmt(v.reorder)+'</td>'
-      +'<td class="num" id="so'+i+'">'+dt(v.stockout)+'</td>'
+      +'<td class="num stg" title="Warehouse stock not yet shipped to Amazon">'+(v.staged?fmt(v.staged):'—')+'</td>'
+      +'<td class="num" title="TOTAL = Available + Inbound + Warehouse — the whole pick pool"><b>'+fmt(v.totalpick)+'</b></td>'
+      +'<td class="num tot" id="tt'+i+'"><input class="vel-in" id="vl'+i+'" value="'+fmt1(v.total)+'" title="Edit velocity /day — Cover, Production Qty and status recompute live" inputmode="decimal" oninput="onVel('+i+',this.value)"></td>'
+      +'<td class="num"><input class="fc-in" id="fd'+i+'" value="'+fdd+'" title="velocity forecast override, units per day" oninput="onFc('+i+',\'d\',this.value)"></td>'
+      +'<td class="num" id="cv'+i+'" title="Cover = TOTAL ÷ velocity/day">'+(v.cover_d==null?'—':fmt(v.cover_d))+'</td>'
+      +'<td class="num muted" id="ro'+i+'" title="Reorder Point = velocity/day × Minimum Cover">'+fmt(v.reorder)+'</td>'
+      +'<td class="num muted" id="so'+i+'" title="Stockout date = today + Cover days">'+dt(v.stockout)+'</td>'
       +'<td class="num" id="oq'+i+'">'+(v.net_qty==null?'<span class="muted">—</span>':'<b>'+fmt(v.net_qty)+'</b>')+'</td>'
       +'<td class="l" id="st'+i+'"><span class="pill '+v.status+'"><span class="dot"></span>'+SLAB[v.status]+'</span></td></tr>';}).join('');
   document.getElementById('inv-phead').innerHTML='<span class="c">◧</span> Replenishment plan — '+rows.length+' of '+ALLINV().length+
@@ -3372,9 +3331,58 @@ function initWarehouseUpload(){
   whStamp();
 }
 
+/* ============================================================
+   Demo data (added 2026-11-25) — gives the de-identified sample
+   SKUs realistic Inbound (shipments) and Warehouse (staged) units
+   so the Candy-model pick pool (TOTAL = Available + Inbound +
+   Warehouse) and Production Qty have something to work with, and
+   so the Warehouse / Shipments (Inbound) / Stock Level sections
+   are populated. All values are invented — no real STEYDA data. */
+function seedDemoData(){
+  try{
+    const inb={'DEMO-SKU-001':240,'DEMO-SKU-002':300,'DEMO-SKU-003':90};
+    const stg={'DEMO-SKU-001':180,'DEMO-SKU-002':120,'DEMO-SKU-003':60};
+    (DATA.inv||[]).forEach(x=>{
+      if(inb[x.sku]!=null) x.incoming=inb[x.sku];
+      if(stg[x.sku]!=null) x.staged=stg[x.sku];
+      x.pool=(x.avail||0)+(x.fctx||0)+(x.incoming||0);
+    });
+    /* Shipments (Inbound) — Amazon "Manage Shipments" style */
+    SHIP.asof='2026-11-23';
+    SHIP.rows=[
+      {id:'FBA15DEMO01',name:'FBA15DEMO01',status:'In transit',dest:'ONT8',window:'Nov 24 – Nov 28',skus:2,unitsLoc:0,unitsExp:330,updated:'2026-11-22'},
+      {id:'FBA15DEMO02',name:'FBA15DEMO02',status:'Receiving',dest:'MDW2',window:'Nov 20 – Nov 24',skus:1,unitsLoc:180,unitsExp:300,updated:'2026-11-23'},
+      {id:'FBA15DEMO03',name:'FBA15DEMO03',status:'Closed',dest:'BFI4',window:'Nov 10 – Nov 14',skus:1,unitsLoc:150,unitsExp:150,updated:'2026-11-12'}
+    ];
+    SHIP.detail={
+      'FBA15DEMO01':[{sku:'DEMO-SKU-001',title:'Variant A · 0.5 lbs',asin:'B0DEMO00A1',qty:240},{sku:'DEMO-SKU-003',title:'Variant C · 2.0 lbs',asin:'B0DEMO00C3',qty:90}],
+      'FBA15DEMO02':[{sku:'DEMO-SKU-002',title:'Variant B · 1.0 lbs',asin:'B0DEMO00B2',qty:300}],
+      'FBA15DEMO03':[{sku:'DEMO-SKU-001',title:'Variant A · 0.5 lbs',asin:'B0DEMO00A1',qty:150}]
+    };
+    /* Warehouse shipment log — staged (not yet shipped) + shipped */
+    WH.rows=[
+      {kind:'staged', pouches:180,cartons:15,yw:'2026-47',week:'Wk 47',ship:'—',contents:'Variant A · 0.5 lbs',packed:'2026-11-18',shipped_raw:'—',planned:false},
+      {kind:'staged', pouches:120,cartons:10,yw:'2026-47',week:'Wk 47',ship:'—',contents:'Variant B · 1.0 lbs',packed:'2026-11-19',shipped_raw:'—',planned:false},
+      {kind:'staged', pouches:60, cartons:5, yw:'2026-48',week:'Wk 48',ship:'—',contents:'Variant C · 2.0 lbs',packed:'',          shipped_raw:'—',planned:true },
+      {kind:'shipped',pouches:150,cartons:13,yw:'2026-46',week:'Wk 46',ship:'FBA15DEMO03',contents:'Variant A · 0.5 lbs',packed:'2026-11-10',shipped_raw:'2026-11-12',planned:false},
+      {kind:'shipped',pouches:300,cartons:25,yw:'2026-46',week:'Wk 46',ship:'FBA15DEMO02',contents:'Variant B · 1.0 lbs',packed:'2026-11-08',shipped_raw:'2026-11-11',planned:false}
+    ];
+    WH.products=['Variant A · 0.5 lbs','Variant B · 1.0 lbs','Variant C · 2.0 lbs'];
+    /* Staged netted out of Production Qty — the netting table on the Warehouse tab */
+    PAYLOAD.NETTED=[
+      {product:'Variant A · 0.5 lbs',sku:'DEMO-SKU-001',cartons:15,pouches:180},
+      {product:'Variant B · 1.0 lbs',sku:'DEMO-SKU-002',cartons:10,pouches:120},
+      {product:'Variant C · 2.0 lbs',sku:'DEMO-SKU-003',cartons:5, pouches:60}
+    ];
+    /* Stock Level — raw-material inventory at the warehouse */
+    CANDY.stock={'Gelatin (kg)':420,'Sugar (kg)':1300,'Citric acid (kg)':85,'Pectin (kg)':60,'Natural flavor A (L)':40,'Colour mix (kg)':25};
+    CANDY.stockDate='2026-11-18';
+  }catch(e){if(window.console)console.error('[dashboard] seedDemoData failed',e);}
+}
 function boot(){
   /* restore anything the user uploaded or typed before the first paint,
      so a reopened file comes back on their data rather than the build's */
+  seedDemoData();
   loadUploads(); loadManual();
   ALLINV().forEach(x=>{if(x.asin)INV_BY_ASIN[x.asin]=x;});
   applyTheme(getTheme());
